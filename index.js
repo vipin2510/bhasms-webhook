@@ -1,55 +1,43 @@
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Only POST allowed' });
   }
 
   try {
-    /*
-      Expected BHASH payload (keys may vary):
-
-      {
-        "from": "919876543210",
-        "message": "View Status",
-        "reference": "CMP1707012345678",
-        "document_url": "https://bhashsms.com/media/file.pdf"
-      }
-    */
-
     const body = req.body;
 
-    // Normalize inputs (BHASH field names vary)
-    const userNumber =
-      body.from || body.mobile || body.sender || null;
-
-    const selectedOption =
-      body.message || body.option || body.text || null;
-
-    const referenceValue =
-      body.reference || body.ref || body.complaint_id || null;
-
-    const documentUrl =
-      body.document_url || body.media_url || null;
+    const userNumber = body.from || body.mobile || body.sender || null;
+    const selectedOption = body.message || body.option || body.text || null;
+    const referenceValue = body.reference || body.ref || body.complaint_id || null;
+    const documentUrl = body.document_url || body.media_url || null;
 
     if (!userNumber || !selectedOption) {
       return res.status(400).json({ error: 'Invalid payload' });
     }
 
     /* ================== LOG WEBHOOK ================== */
-
     await supabase.from('webhook_logs').insert([{
       provider: 'BHASH',
       payload: body
     }]);
 
     /* ================== REGISTER COMPLAINT ================== */
-
     if (/register/i.test(selectedOption)) {
       const complaintId = 'CMP' + Date.now();
 
@@ -69,7 +57,6 @@ export default async function handler(req, res) {
     }
 
     /* ================== VIEW STATUS ================== */
-
     if (/status/i.test(selectedOption)) {
       if (!referenceValue) {
         return res.json({
@@ -95,7 +82,6 @@ export default async function handler(req, res) {
     }
 
     /* ================== FEEDBACK ================== */
-
     if (/feedback/i.test(selectedOption)) {
       await supabase.from('feedback').insert([{
         user_number: userNumber,
@@ -109,7 +95,6 @@ export default async function handler(req, res) {
     }
 
     /* ================== UNKNOWN OPTION ================== */
-
     return res.json({
       reply:
         'Welcome to Police Support System 🚔\n\n' +
@@ -123,4 +108,4 @@ export default async function handler(req, res) {
     console.error('BHASH Webhook Error:', error);
     return res.status(500).json({ error: 'Server error' });
   }
-}
+};
