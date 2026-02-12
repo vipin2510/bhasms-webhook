@@ -1,5 +1,4 @@
 const { createClient } = require('@supabase/supabase-js');
-const fetch = require('node-fetch');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -86,7 +85,8 @@ module.exports = async function handler(req, res) {
       }
 
       /* ================= SEND AUTO REPLY ================= */
-      await sendWhatsAppMessage(from,
+      await sendWhatsAppMessage(
+        from,
         '🚔 *Kanker Police Assistance*\n\n' +
         'Your message has been received.\n\n' +
         'Reply with:\n' +
@@ -111,7 +111,7 @@ module.exports = async function handler(req, res) {
 async function sendWhatsAppMessage(to, text) {
   const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
-  await fetch(url, {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
@@ -124,4 +124,7 @@ async function sendWhatsAppMessage(to, text) {
       text: { body: text }
     })
   });
+
+  const data = await response.json();
+  console.log('📤 WhatsApp API Response:', data);
 }
