@@ -1,107 +1,127 @@
 const { createClient } = require('@supabase/supabase-js');
+const fetch = require('node-fetch');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
 
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "kanker_police_bot_123";
+
 module.exports = async function handler(req, res) {
+
   /* ================= CORS ================= */
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
+
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  try {
-    /* ================= DEBUG LOGGING ================= */
-    console.log('=== INCOMING REQUEST ===');
-    console.log('Method:', req.method);
-    console.log('Query:', req.query);
-    console.log('Body:', req.body);
-    console.log('========================');
+  /* ================= META WEBHOOK VERIFY ================= */
+  if (req.method === 'GET') {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
 
-    /* ================= INPUT - Handle ALL variations ================= */
-    const from = 
-      req.body?.from || 
-      req.body?.fromphone || 
-      req.query?.from || 
-      req.query?.fromphone || 
-      null;
-
-    const message = 
-      req.body?.message || 
-      req.query?.message || 
-      null;
-
-    const fromname = 
-      req.body?.fromname || 
-      req.query?.fromname || 
-      null;
-
-    /* ================= VALIDATION ================= */
-    if (!from || !message) {
-      console.error('Validation failed:', { from, message, fromname });
-      return res.status(400).json({
-        error: 'fromphone and message are required',
-        received: { from, message, fromname }
-      });
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+      console.log('✅ Webhook verified');
+      return res.status(200).send(challenge);
+    } else {
+      console.error('❌ Verification failed');
+      return res.status(403).send('Forbidden');
     }
-
-    /* ================= AUTO CATEGORY ================= */
-    let category = 'general';
-    if (/register|complaint|report/i.test(message)) {
-      category = 'register';
-    } else if (/status|track/i.test(message)) {
-      category = 'status';
-    } else if (/feedback|suggest/i.test(message)) {
-      category = 'feedback';
-    }
-
-    /* ================= INSERT ================= */
-    const insertData = {
-      phone: from,
-      from_name: fromname,
-      message: message,
-      category: category,
-      source: 'BHASH'
-    };
-
-    console.log('Inserting to Supabase:', insertData);
-
-    const { data, error } = await supabase
-      .from('complaints')
-      .insert([insertData])
-      .select(); // Add .select() to get the inserted data back
-
-    if (error) {
-      console.error('Supabase Error:', error);
-      return res.status(500).json({ 
-        error: 'DB insert failed',
-        details: error.message 
-      });
-    }
-
-    console.log('Successfully inserted:', data);
-
-    /* ================= BOT REPLY ================= */
-    return res.status(200).json({
-      reply:
-        '🚔 Police Support System\n\n' +
-        'Your message has been received successfully.\n\n' +
-        'You can reply with:\n' +
-        '1️⃣ Register Complaint\n' +
-        '2️⃣ Check Status <Complaint ID>\n' +
-        '3️⃣ Feedback <your message>'
-    });
-
-  } catch (err) {
-    console.error('Webhook Fatal Error:', err);
-    return res.status(500).json({ 
-      error: 'Server error',
-      message: err.message 
-    });
   }
+
+  /* ================= HANDLE INCOMING MESSAGE ================= */
+  if (req.method === 'POST') {
+    try {
+      console.log('📩 Incoming Webhook:', JSON.stringify(req.body, null, 2));
+
+      const entry = req.body.entry?.[0];
+      const change = entry?.changes?.[0];
+      const value = change?.value;
+      const messageObj = value?.messages?.[0];
+
+      if (!messageObj) {
+        return res.status(200).json({ status: 'no_message' });
+      }
+
+      const from = messageObj.from;
+      const type = messageObj.type;
+      let message = null;
+      let media_id = null;
+
+      if (type === 'text') {
+        message = messageObj.text.body;
+      }
+
+      if (type === 'image') {
+        message = '[IMAGE RECEIVED]';
+        media_id = messageObj.image.id;
+      }
+
+      /* ================= AUTO CATEGORY ================= */
+      let category = 'general';
+      if (/register|complaint|report/i.test(message)) category = 'register';
+      else if (/status|track/i.test(message)) category = 'status';
+      else if (/feedback|suggest/i.test(message)) category = 'feedback';
+
+      /* ================= INSERT TO DB ================= */
+      const insertData = {
+        phone: from,
+        message: message,
+        media_id: media_id,
+        category: category,
+        source: 'WhatsApp'
+      };
+
+      const { error } = await supabase
+        .from('complaints')
+        .insert([insertData]);
+
+      if (error) {
+        console.error('❌ Supabase Error:', error);
+      }
+
+      /* ================= SEND AUTO REPLY ================= */
+      await sendWhatsAppMessage(from,
+        '🚔 *Kanker Police Assistance*\n\n' +
+        'Your message has been received.\n\n' +
+        'Reply with:\n' +
+        '1️⃣ Register Complaint\n' +
+        '2️⃣ Track Complaint\n' +
+        '3️⃣ Feedback'
+      );
+
+      return res.status(200).json({ status: 'ok' });
+
+    } catch (err) {
+      console.error('🔥 Webhook Error:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  return res.status(405).send('Method Not Allowed');
 };
+
+/* ================= SEND MESSAGE FUNCTION ================= */
+
+async function sendWhatsAppMessage(to, text) {
+  const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
+
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body: text }
+    })
+  });
+}
