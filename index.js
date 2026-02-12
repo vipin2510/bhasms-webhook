@@ -10,43 +10,48 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
+  
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
   try {
-    /* ================= INPUT (OPTION 2) ================= */
-    let from, message, fromname;
+    /* ================= DEBUG LOGGING ================= */
+    console.log('=== INCOMING REQUEST ===');
+    console.log('Method:', req.method);
+    console.log('Query:', req.query);
+    console.log('Body:', req.body);
+    console.log('========================');
 
-    if (req.method === 'POST' || req.method === 'GET') {
-      from =
-        req.body?.from ||
-        req.query?.fromphone ||
-        req.query?.from ||
-        null;
+    /* ================= INPUT - Handle ALL variations ================= */
+    const from = 
+      req.body?.from || 
+      req.body?.fromphone || 
+      req.query?.from || 
+      req.query?.fromphone || 
+      null;
 
-      message =
-        req.body?.message ||
-        req.query?.message ||
-        null;
+    const message = 
+      req.body?.message || 
+      req.query?.message || 
+      null;
 
-      fromname =
-        req.body?.fromname ||
-        req.query?.fromname ||
-        null;
-    }
+    const fromname = 
+      req.body?.fromname || 
+      req.query?.fromname || 
+      null;
 
     /* ================= VALIDATION ================= */
     if (!from || !message) {
+      console.error('Validation failed:', { from, message, fromname });
       return res.status(400).json({
-        error: 'fromphone and message are required'
+        error: 'fromphone and message are required',
+        received: { from, message, fromname }
       });
     }
 
     /* ================= AUTO CATEGORY ================= */
     let category = 'general';
-
     if (/register|complaint|report/i.test(message)) {
       category = 'register';
     } else if (/status|track/i.test(message)) {
@@ -56,20 +61,30 @@ module.exports = async function handler(req, res) {
     }
 
     /* ================= INSERT ================= */
-    const { error } = await supabase
+    const insertData = {
+      phone: from,
+      from_name: fromname,
+      message: message,
+      category: category,
+      source: 'BHASH'
+    };
+
+    console.log('Inserting to Supabase:', insertData);
+
+    const { data, error } = await supabase
       .from('complaints')
-      .insert([{
-        phone: from,
-        from_name: fromname,
-        message: message,
-        category: category,
-        source: 'BHASH'
-      }]);
+      .insert([insertData])
+      .select(); // Add .select() to get the inserted data back
 
     if (error) {
       console.error('Supabase Error:', error);
-      return res.status(500).json({ error: 'DB insert failed' });
+      return res.status(500).json({ 
+        error: 'DB insert failed',
+        details: error.message 
+      });
     }
+
+    console.log('Successfully inserted:', data);
 
     /* ================= BOT REPLY ================= */
     return res.status(200).json({
@@ -84,6 +99,9 @@ module.exports = async function handler(req, res) {
 
   } catch (err) {
     console.error('Webhook Fatal Error:', err);
-    return res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ 
+      error: 'Server error',
+      message: err.message 
+    });
   }
 };
